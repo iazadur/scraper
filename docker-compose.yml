@@ -1,0 +1,130 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: bangladesh_news_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: bangladesh_news
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - news_scraper_network
+
+  # Redis for Celery
+  redis:
+    image: redis:7.2-alpine
+    container_name: bangladesh_news_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - news_scraper_network
+
+  # Main Application
+  app:
+    build: .
+    container_name: bangladesh_news_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URL=mongodb://admin:password123@mongodb:27017/bangladesh_news?authSource=admin
+      - DATABASE_NAME=bangladesh_news
+      - RAW_COLLECTION=raw_news
+      - UNIQUE_COLLECTION=unique_news
+      - NOMINATIM_USER_AGENT=bangladesh_news_scraper
+      - PELIAS_API_URL=https://api.geocode.earth/v1
+      - SCRAPING_DELAY=1
+      - MAX_CONCURRENT_REQUESTS=5
+      - REQUEST_TIMEOUT=30
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - mongodb
+      - redis
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - news_scraper_network
+
+  # Celery Worker for background tasks
+  celery_worker:
+    build: .
+    container_name: bangladesh_news_celery_worker
+    restart: unless-stopped
+    command: celery --app=celery_app worker --loglevel=info
+    environment:
+      - MONGODB_URL=mongodb://admin:password123@mongodb:27017/bangladesh_news?authSource=admin
+      - DATABASE_NAME=bangladesh_news
+      - RAW_COLLECTION=raw_news
+      - UNIQUE_COLLECTION=unique_news
+      - NOMINATIM_USER_AGENT=bangladesh_news_scraper
+      - PELIAS_API_URL=https://api.geocode.earth/v1
+      - SCRAPING_DELAY=1
+      - MAX_CONCURRENT_REQUESTS=5
+      - REQUEST_TIMEOUT=30
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - mongodb
+      - redis
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - news_scraper_network
+
+  # Celery Beat for scheduled tasks
+  celery_beat:
+    build: .
+    container_name: bangladesh_news_celery_beat
+    restart: unless-stopped
+    command: celery --app=celery_app beat --loglevel=info
+    environment:
+      - MONGODB_URL=mongodb://admin:password123@mongodb:27017/bangladesh_news?authSource=admin
+      - DATABASE_NAME=bangladesh_news
+      - RAW_COLLECTION=raw_news
+      - UNIQUE_COLLECTION=unique_news
+      - NOMINATIM_USER_AGENT=bangladesh_news_scraper
+      - PELIAS_API_URL=https://api.geocode.earth/v1
+      - SCRAPING_DELAY=1
+      - MAX_CONCURRENT_REQUESTS=5
+      - REQUEST_TIMEOUT=30
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - mongodb
+      - redis
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - news_scraper_network
+
+  # Flower for Celery monitoring (optional)
+  flower:
+    build: .
+    container_name: bangladesh_news_flower
+    restart: unless-stopped
+    command: celery --broker=redis://redis:6379/0 --app=celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    networks:
+      - news_scraper_network
+
+volumes:
+  mongodb_data:
+  redis_data:
+
+networks:
+  news_scraper_network:
+    driver: bridge
